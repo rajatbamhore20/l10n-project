@@ -14,13 +14,20 @@ pipeline {
 
         stage('Validate') {
             steps {
-                sh 'bash tools/run_checks.sh "$LOCALES_DIR"'
+                script {
+                    env.LOCALE_VALIDATION_STATUS = sh(script: 'bash tools/run_checks.sh "$LOCALES_DIR"', returnStatus: true).toString()
+                }
             }
         }
 
         stage('Report') {
             steps {
                 archiveArtifacts artifacts: 'reports/locale-report.txt', allowEmptyArchive: false
+                script {
+                    if (env.LOCALE_VALIDATION_STATUS != '0') {
+                        error('Locale validation failed; see reports/locale-report.txt for details.')
+                    }
+                }
             }
         }
     }
