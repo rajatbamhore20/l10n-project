@@ -11,11 +11,13 @@ from pathlib import Path
 PLACEHOLDER_RE = re.compile(r"\{[^{}\s]+\}")
 
 
-def placeholders(value):
-    return set(PLACEHOLDER_RE.findall(value))
+def find_placeholders(text):
+    """Return placeholders such as {count}, {percent}, or {year}."""
+    return set(PLACEHOLDER_RE.findall(text))
 
 
 def load_json(path):
+    """Read a JSON file and return either its data or a readable error."""
     try:
         with path.open(encoding="utf-8") as handle:
             data = json.load(handle)
@@ -35,28 +37,36 @@ def load_json(path):
     return data, None
 
 
-def compare_locale(source, locale_data):
+def check_locale(source_strings, translated_strings):
+    """Compare one translated locale against en.json."""
     issues = []
-    source_keys = set(source)
-    locale_keys = set(locale_data)
+    source_keys = set(source_strings)
+    translated_keys = set(translated_strings)
 
-    for key in sorted(source_keys - locale_keys):
+    # Keys present in English must exist in every translation.
+    for key in sorted(source_keys - translated_keys):
         issues.append(f"missing key: {key}")
 
-    for key in sorted(locale_keys - source_keys):
+    # Extra keys usually mean the translation is stale or has a typo.
+    for key in sorted(translated_keys - source_keys):
         issues.append(f"extra key: {key}")
 
-    for key in sorted(source_keys & locale_keys):
-        translated_value = locale_data[key]
+    # Only compare values for keys that exist in both files.
+    for key in sorted(source_keys & translated_keys):
+        english_value = source_strings[key]
+        translated_value = translated_strings[key]
+
         if translated_value == "":
             issues.append(f"empty value: {key}")
 
-        expected = placeholders(source[key])
-        actual = placeholders(translated_value)
-        if expected != actual:
-            missing = sorted(expected - actual)
-            extra = sorted(actual - expected)
+        # Placeholder names must stay unchanged so app formatting still works.
+        english_placeholders = find_placeholders(english_value)
+        translated_placeholders = find_placeholders(translated_value)
+        if english_placeholders != translated_placeholders:
+            missing = sorted(english_placeholders - translated_placeholders)
+            extra = sorted(translated_placeholders - english_placeholders)
             details = []
+
             if missing:
                 details.append(f"missing {', '.join(missing)}")
             if extra:
@@ -67,6 +77,7 @@ def compare_locale(source, locale_data):
 
 
 def print_section(name, issues):
+    """Print the result for one locale file."""
     print(f"\n{name}")
     print("-" * len(name))
     if not issues:
@@ -78,6 +89,7 @@ def print_section(name, issues):
 
 
 def validate(locales_dir):
+    """Validate every locale JSON file in the selected directory."""
     if not locales_dir.exists():
         print(f"ERROR: locales directory does not exist: {locales_dir}", file=sys.stderr)
         return 1
@@ -86,11 +98,12 @@ def validate(locales_dir):
         return 1
 
     source_path = locales_dir / "en.json"
-    source, error = load_json(source_path)
+    source_strings, error = load_json(source_path)
     if error:
         print(f"ERROR: cannot load source locale {source_path}: {error}", file=sys.stderr)
         return 1
 
+    # Check every JSON file except en.json, because en.json is the source of truth.
     locale_files = sorted(path for path in locales_dir.glob("*.json") if path.name != "en.json")
     if not locale_files:
         print(f"ERROR: no locale JSON files found in {locales_dir}", file=sys.stderr)
@@ -98,14 +111,14 @@ def validate(locales_dir):
 
     total_issues = 0
     print(f"Locale validation report for {locales_dir}")
-    print(f"Source: {source_path.name} ({len(source)} keys)")
+    print(f"Source: {source_path.name} ({len(source_strings)} keys)")
 
     for locale_path in locale_files:
-        locale_data, error = load_json(locale_path)
+        translated_strings, error = load_json(locale_path)
         if error:
             issues = [error]
         else:
-            issues = compare_locale(source, locale_data)
+            issues = check_locale(source_strings, translated_strings)
 
         total_issues += len(issues)
         print_section(locale_path.name, issues)
